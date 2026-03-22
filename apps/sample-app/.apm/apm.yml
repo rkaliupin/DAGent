@@ -1,0 +1,69 @@
+name: sample-app
+version: 1.0.0
+description: "Azure Web App + microservices — sample template for agentic pipeline"
+tokenBudget: 6000
+
+agents:
+  backend-dev:
+    instructions: [always, backend, tooling/roam-tool-rules.md, tooling/roam-efficiency.md]
+    mcp: [roam-code]
+    skills: [test-backend-unit]
+  frontend-dev:
+    instructions: [always, frontend, tooling/roam-tool-rules.md, tooling/roam-efficiency.md]
+    mcp: [roam-code]
+    skills: [test-frontend-unit, build-frontend]
+  backend-unit-test:
+    instructions: [always, tooling/roam-test-intelligence.md]
+    mcp: [roam-code]
+    skills: [test-backend-unit]
+  frontend-unit-test:
+    instructions: [always, tooling/roam-test-intelligence.md]
+    mcp: [roam-code]
+    skills: [test-frontend-unit]
+  integration-test:
+    instructions: [always, backend/integration-testing.md, tooling/cloud-telemetry.md]
+    mcp: []
+    skills: [test-integration]
+  live-ui:
+    instructions: [always, frontend/e2e-testing-mandate.md, tooling/roam-tool-rules.md, tooling/cloud-telemetry.md]
+    mcp: [roam-code, playwright]
+    skills: []
+  code-cleanup:
+    instructions: [always, tooling/roam-tool-rules.md, tooling/roam-efficiency.md]
+    mcp: [roam-code]
+    skills: []
+  docs-archived:
+    instructions: [always, tooling/roam-tool-rules.md]
+    mcp: [roam-code]
+    skills: []
+  create-pr:
+    instructions: [always, tooling/roam-tool-rules.md]
+    mcp: [roam-code]
+    skills: []
+  push-code:
+    instructions: [always]
+    mcp: []
+    skills: []
+  poll-ci:
+    instructions: [always]
+    mcp: []
+    skills: []
+
+config:
+  urls:
+    swa: "https://YOUR-SWA-URL.azurestaticapps.net"            # TODO: Replace with your Static Web App URL
+    functionApp: "https://YOUR-FUNC-APP.azurewebsites.net"      # TODO: Replace with your Function App URL
+    apim: "https://YOUR-APIM.azure-api.net"                     # TODO: Replace with your APIM URL
+  azureResources:
+    functionAppName: "YOUR-FUNC-APP"                             # TODO: Used by az functionapp keys list --name
+    resourceGroup: "YOUR-RESOURCE-GROUP"                         # TODO: Used by az functionapp keys list --resource-group
+    appInsightsName: "YOUR-APP-INSIGHTS"                         # TODO: Used by az monitor app-insights query --app
+  directories:
+    backend: backend
+    frontend: frontend
+    infra: infra
+    e2e: e2e
+  testCommands:
+    backendUnit: "cd {appRoot}/backend && npx jest --verbose"       # TODO: Adapt to your test runner
+    frontendUnit: "cd {appRoot}/frontend && npx jest --verbose"     # TODO: Adapt to your test runner
+    integration: "cd {appRoot}/backend && npm run test:integration"  # TODO: Adapt to your integration tests
