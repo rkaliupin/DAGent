@@ -4,6 +4,10 @@ description: "Azure Web App + microservices — sample template for agentic pipe
 tokenBudget: 6000
 
 agents:
+  schema-dev:
+    instructions: [always, backend/schema-sync.md, tooling/roam-tool-rules.md, tooling/roam-efficiency.md]
+    mcp: [roam-code]
+    skills: [test-schema-validation]
   backend-dev:
     instructions: [always, backend, tooling/roam-tool-rules.md, tooling/roam-efficiency.md]
     mcp: [roam-code]
