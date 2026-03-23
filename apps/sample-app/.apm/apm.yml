@@ -51,13 +51,13 @@ agents:
 
 config:
   urls:
-    swa: "https://YOUR-SWA-URL.azurestaticapps.net"            # TODO: Replace with your Static Web App URL
-    functionApp: "https://YOUR-FUNC-APP.azurewebsites.net"      # TODO: Replace with your Function App URL
-    apim: "https://YOUR-APIM.azure-api.net"                     # TODO: Replace with your APIM URL
+    swa: "${SWA_URL}"
+    functionApp: "${FUNCTION_APP_URL}"
+    apim: "${APIM_URL}"
   azureResources:
-    functionAppName: "YOUR-FUNC-APP"                             # TODO: Used by az functionapp keys list --name
-    resourceGroup: "YOUR-RESOURCE-GROUP"                         # TODO: Used by az functionapp keys list --resource-group
-    appInsightsName: "YOUR-APP-INSIGHTS"                         # TODO: Used by az monitor app-insights query --app
+    functionAppName: "${AZURE_FUNCTION_APP_NAME}"
+    resourceGroup: "${AZURE_RESOURCE_GROUP}"
+    appInsightsName: "${AZURE_APP_INSIGHTS_NAME}"
   directories:
     backend: backend
     frontend: frontend
@@ -67,3 +67,4 @@ config:
     backendUnit: "cd {appRoot}/backend && npx jest --verbose"       # TODO: Adapt to your test runner
     frontendUnit: "cd {appRoot}/frontend && npx jest --verbose"     # TODO: Adapt to your test runner
     integration: "cd {appRoot}/backend && npm run test:integration"  # TODO: Adapt to your integration tests
+

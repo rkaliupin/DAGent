@@ -8,14 +8,16 @@ Terraform infrastructure for the sample app: Resource Group, Function App, APIM,
 - Azure CLI logged in (`az login`)
 - Entra ID permissions: `Application.ReadWrite.OwnedBy` (for app registration)
 
-## Quick Start
+## Quick Start (Local)
 
 ```bash
-cp dev.tfvars my.tfvars           # customize with your subscription ID and email
+cp dev.tfvars.example dev.tfvars  # customize with your subscription ID and email
 terraform init
-terraform plan -var-file=my.tfvars
-terraform apply -var-file=my.tfvars
+terraform plan -var-file=dev.tfvars
+terraform apply -var-file=dev.tfvars
 ```
+
+> **CI/CD note:** `*.tfvars` files are git-ignored. In GitHub Actions, all variables are injected via `TF_VAR_*` environment variables from GitHub Secrets — no var-file is used. See [AGENTIC-WORKFLOW.md](../../../.github/AGENTIC-WORKFLOW.md#cicd-integration) for the full secrets list.
 
 ## Auth Mode Switching
 

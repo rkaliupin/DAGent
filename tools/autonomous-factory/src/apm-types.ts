@@ -39,9 +39,9 @@ export const ApmCompiledAgentSchema = z.object({
 export const ApmConfigSchema = z.object({
   urls: z
     .object({
-      swa: z.string().url().optional(),
-      functionApp: z.string().url().optional(),
-      apim: z.string().url().optional(),
+      swa: z.string().optional(),
+      functionApp: z.string().optional(),
+      apim: z.string().optional(),
     })
     .optional(),
   azureResources: z

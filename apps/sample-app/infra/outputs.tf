@@ -9,12 +9,12 @@ output "resource_group_name" {
 
 output "function_app_name" {
   description = "Name of the Azure Function App."
-  value       = azurerm_linux_function_app.main.name
+  value       = azurerm_function_app_flex_consumption.main.name
 }
 
 output "function_app_url" {
   description = "Default URL of the Function App."
-  value       = "https://${azurerm_linux_function_app.main.default_hostname}"
+  value       = "https://${azurerm_function_app_flex_consumption.main.default_hostname}"
 }
 
 output "apim_gateway_url" {
@@ -41,4 +41,19 @@ output "application_insights_connection_string" {
   description = "Application Insights connection string."
   value       = azurerm_application_insights.main.connection_string
   sensitive   = true
+}
+
+output "cicd_client_id" {
+  description = "Azure AD application client ID for CI/CD OIDC authentication — set as AZURE_CICD_CLIENT_ID GitHub secret."
+  value       = azuread_application.cicd.client_id
+}
+
+output "swa_url" {
+  description = "Static Web App default URL — set as SWA_URL GitHub secret."
+  value       = "https://${azurerm_static_web_app.main.default_host_name}"
+}
+
+output "swa_name" {
+  description = "Static Web App resource name — use to retrieve deployment token via az CLI."
+  value       = azurerm_static_web_app.main.name
 }

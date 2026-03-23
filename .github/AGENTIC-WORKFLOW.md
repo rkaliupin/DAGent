@@ -260,7 +260,7 @@ All deploy workflows trigger on both `main` and `feature/**` branches. A concurr
 |---|---|---|
 | `deploy-backend.yml` | Push to `main` or `feature/**` on `backend/**`, `packages/schemas/**` | Build + deploy Azure Functions |
 | `deploy-frontend.yml` | Push to `main` or `feature/**` on `frontend/**`, `packages/schemas/**` | Build + deploy Azure Static Web Apps |
-| `deploy-infra.yml` | Push/PR on `infra/**` | Terraform plan (PRs) + apply (main/feature push) |
+| `deploy-infra.yml` | Push/PR on `infra/**` | Terraform plan (PRs) + apply (main/feature push). Variables injected via `TF_VAR_*` env vars from GitHub Secrets (no `.tfvars` file in CI). |
 | `regression-tests.yml` | `workflow_run` on deploy success (main only) | Integration tests + Playwright E2E against live infra |
 | `agentic-feature.yml` | `workflow_dispatch` | Runs the full SDK orchestrator in CI (120 min timeout) |
 | `schema-drift.yml` | PRs touching schema files | Validation only — no deploy |
@@ -278,6 +278,10 @@ All secrets are configured in **Settings > Secrets and variables > Actions**.
 | `AZURE_SUBSCRIPTION_ID` | All deploy + regression workflows | Azure Portal: **Subscriptions > [your subscription] > Subscription ID**. Also passed as `TF_VAR_subscription_id` to Terraform. |
 | `COPILOT_PAT` | `agentic-feature.yml` | GitHub: **Settings > Developer settings > Personal access tokens > Tokens (classic)**. Scopes required: `copilot`, `repo`, `read:org`. Used by `@github/copilot-sdk` for agent sessions. |
 | `SWA_DEPLOYMENT_TOKEN` | `deploy-frontend.yml` | Azure Portal: **Static Web Apps > [your app] > Manage deployment token**. One token per SWA instance. |
+| `APIM_PUBLISHER_EMAIL` | `deploy-infra.yml` | Publisher contact email for APIM notifications (e.g., `admin@example.com`). Passed as `TF_VAR_apim_publisher_email`. |
+| `FRONTEND_URL` | `deploy-infra.yml` | SWA URL with trailing slash (e.g., `https://your-swa.azurestaticapps.net/`). Passed as `TF_VAR_frontend_url`. Leave empty for initial deploy. |
+| `AUTH_MODE` | `deploy-infra.yml` | `demo` or `entra`. Passed as `TF_VAR_auth_mode`. |
+| `DEMO_CREDENTIALS` | `deploy-infra.yml` | JSON object: `{"username":"demo","password":"demopass"}`. Passed as `TF_VAR_demo_credentials`. Required when `AUTH_MODE=demo`. |
 
 #### Secrets (Frontend Build-Time — Baked into Bundle)
 
@@ -359,6 +363,12 @@ Several CI/CD secrets must stay in sync with the APM manifest ([`apps/sample-app
    terraform output function_app_url        # → FUNCTION_APP_URL
    terraform output swa_url                 # → SWA_URL
    terraform output apim_url               # → NEXT_PUBLIC_API_BASE_URL
+
+   # Terraform variable secrets (used by deploy-infra.yml as TF_VAR_* env vars)
+   # APIM_PUBLISHER_EMAIL  → your publisher email
+   # FRONTEND_URL          → your SWA URL with trailing slash (or empty for initial deploy)
+   # AUTH_MODE             → "demo" or "entra"
+   # DEMO_CREDENTIALS      → {"username":"demo","password":"demopass"} (if demo mode)
 
    # Variables (Settings > Secrets and variables > Actions > Variables)
    terraform output function_app_name       # → AZURE_FUNCTION_APP_NAME

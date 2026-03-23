@@ -124,9 +124,10 @@ resource "azurerm_application_insights" "main" {
 }
 
 # =============================================================================
-# 5. Function App (Consumption Y1)
+# 5. Function App (Flex Consumption FC1)
 # =============================================================================
 # Node.js 22 runtime, system-assigned Managed Identity.
+# Flex Consumption avoids the Dynamic/Basic VM quota restrictions.
 # Demo auth env vars conditionally included based on auth_mode.
 # =============================================================================
 
@@ -135,49 +136,38 @@ resource "azurerm_service_plan" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
-  sku_name            = "Y1"
+  sku_name            = "FC1"
   tags                = local.tags
 }
 
-resource "azurerm_linux_function_app" "main" {
+resource "azurerm_storage_container" "func_deployments" {
+  name                 = "app-package"
+  storage_account_id   = azurerm_storage_account.func_runtime.id
+}
+
+resource "azurerm_function_app_flex_consumption" "main" {
   name                = "func-sample-app-${var.resource_suffix}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   service_plan_id     = azurerm_service_plan.main.id
 
-  storage_account_name       = azurerm_storage_account.func_runtime.name
-  storage_account_access_key = azurerm_storage_account.func_runtime.primary_access_key
+  storage_container_type      = "blobContainer"
+  storage_container_endpoint  = "${azurerm_storage_account.func_runtime.primary_blob_endpoint}${azurerm_storage_container.func_deployments.name}"
+  storage_authentication_type = "StorageAccountConnectionString"
+  storage_access_key          = azurerm_storage_account.func_runtime.primary_access_key
 
-  https_only              = true
-  builtin_logging_enabled = false
+  runtime_name    = "node"
+  runtime_version = "22"
 
   identity {
     type = "SystemAssigned"
   }
 
-  site_config {
-    minimum_tls_version = "1.2"
-    application_stack {
-      node_version = "22"
-    }
-
-    cors {
-      allowed_origins = concat(
-        var.environment == "dev" ? ["http://localhost:3000"] : [],
-        local.frontend_origin != "" ? [local.frontend_origin] : [],
-      )
-    }
-  }
+  site_config {}
 
   app_settings = merge({
     APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.main.connection_string
-    FUNCTIONS_WORKER_RUNTIME             = "node"
-    WEBSITE_NODE_DEFAULT_VERSION         = "~22"
-    WEBSITE_RUN_FROM_PACKAGE             = "1"
-
-    # TODO: Add your app-specific environment variables here
   }, var.auth_mode == "demo" ? {
-    # --- Demo Auth Mode ---
     AUTH_MODE  = "demo"
     DEMO_USER  = var.demo_credentials.username
     DEMO_PASS  = var.demo_credentials.password
@@ -185,18 +175,12 @@ resource "azurerm_linux_function_app" "main" {
   } : {})
 
   tags = local.tags
-
-  lifecycle {
-    ignore_changes = [
-      app_settings["WEBSITE_RUN_FROM_PACKAGE"],
-    ]
-  }
 }
 
 # Grant Function App MI "Key Vault Secrets User"
 resource "azurerm_role_assignment" "func_kv_secrets_user" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
-  depends_on           = [azurerm_linux_function_app.main]
+  principal_id         = azurerm_function_app_flex_consumption.main.identity[0].principal_id
+  depends_on           = [azurerm_function_app_flex_consumption.main]
 }

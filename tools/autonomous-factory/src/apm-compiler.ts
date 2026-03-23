@@ -73,6 +73,33 @@ function parseMcpYaml(filePath: string): { name: string; config: ApmMcpConfig } 
 }
 
 // ---------------------------------------------------------------------------
+// Environment variable interpolation
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively resolves `${ENV_VAR}` patterns in string values.
+ * Unresolved variables are left as-is (no error) to allow partial resolution.
+ */
+function resolveEnvVars<T>(obj: T): T {
+  if (typeof obj === "string") {
+    return obj.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_match, name) => {
+      return process.env[name] ?? _match;
+    }) as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => resolveEnvVars(item)) as T;
+  }
+  if (obj !== null && typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = resolveEnvVars(value);
+    }
+    return result as T;
+  }
+  return obj;
+}
+
+// ---------------------------------------------------------------------------
 // Compiler
 // ---------------------------------------------------------------------------
 
@@ -224,13 +251,17 @@ export function compileApm(appRoot: string): ApmCompiledOutput {
     };
   }
 
-  // --- 6. Build compiled output ---
+  // --- 6. Build compiled output (resolve env vars in config) ---
+  const resolvedConfig = manifest.config
+    ? resolveEnvVars(manifest.config)
+    : undefined;
+
   const output: ApmCompiledOutput = {
     version: "1.0.0",
     compiledAt: new Date().toISOString(),
     tokenBudget: manifest.tokenBudget,
     agents,
-    ...(manifest.config ? { config: manifest.config } : {}),
+    ...(resolvedConfig ? { config: resolvedConfig } : {}),
   };
 
   // --- 7. Write to .compiled/context.json ---

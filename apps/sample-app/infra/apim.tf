@@ -86,9 +86,9 @@ resource "azurerm_api_management" "main" {
 # =============================================================================
 
 data "azurerm_function_app_host_keys" "main" {
-  name                = azurerm_linux_function_app.main.name
+  name                = azurerm_function_app_flex_consumption.main.name
   resource_group_name = azurerm_resource_group.main.name
-  depends_on          = [azurerm_linux_function_app.main]
+  depends_on          = [azurerm_function_app_flex_consumption.main]
 }
 
 resource "azurerm_key_vault_secret" "func_host_key" {
@@ -142,8 +142,8 @@ resource "azurerm_api_management_backend" "func" {
   resource_group_name = azurerm_resource_group.main.name
   api_management_name = azurerm_api_management.main.name
   protocol            = "http"
-  url                 = "https://${azurerm_linux_function_app.main.default_hostname}/api"
-  resource_id         = "https://management.azure.com${azurerm_linux_function_app.main.id}"
+  url                 = "https://${azurerm_function_app_flex_consumption.main.default_hostname}/api"
+  resource_id         = "https://management.azure.com${azurerm_function_app_flex_consumption.main.id}"
 
   credentials {
     header = {
@@ -169,7 +169,7 @@ resource "azurerm_api_management_api" "demo_auth" {
   protocols             = ["https"]
   subscription_required = false
 
-  service_url = "https://${azurerm_linux_function_app.main.default_hostname}/api"
+  service_url = "https://${azurerm_function_app_flex_consumption.main.default_hostname}/api"
 
   import {
     content_format = "openapi"
@@ -228,7 +228,7 @@ resource "azurerm_api_management_api" "sample" {
   protocols             = ["https"]
   subscription_required = false
 
-  service_url = "https://${azurerm_linux_function_app.main.default_hostname}/api"
+  service_url = "https://${azurerm_function_app_flex_consumption.main.default_hostname}/api"
 
   import {
     content_format = "openapi"

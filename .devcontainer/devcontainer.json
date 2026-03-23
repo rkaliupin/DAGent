@@ -23,7 +23,7 @@
     }
   },
 
-  "postCreateCommand": "npm ci && cd tools/autonomous-factory && npm ci && cd ../.. && npx --yes playwright install --with-deps chromium && bash tools/autonomous-factory/setup-roam.sh && az extension add --name application-insights --yes 2>/dev/null",
+  "postCreateCommand": "npm install && cd tools/autonomous-factory && npm install && cd ../.. && npx --yes playwright install --with-deps chromium && bash tools/autonomous-factory/setup-roam.sh && az extension add --name application-insights --yes 2>/dev/null",
 
   "customizations": {
     "vscode": {
@@ -33,7 +33,8 @@
         "hashicorp.terraform",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "ms-azuretools.vscode-azurefunctions"
+        "ms-azuretools.vscode-azurefunctions",
+        "anthropic.claude-code"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "zsh",

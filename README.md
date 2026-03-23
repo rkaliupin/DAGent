@@ -8,30 +8,68 @@
 
 ## Quick Start
 
-```bash
-# 1. Clone and open in DevContainer (VS Code / Codespaces)
-#    The postCreateCommand installs all deps, Playwright, and roam-code.
+### 1. Open in DevContainer
 
-# 2. Create a feature spec
+This project **requires a DevContainer** — it provides Node.js 22, Python 3.11, Azure CLI, GitHub CLI, Playwright with Chromium, and roam-code pre-installed. All dependencies are installed automatically via `postCreateCommand`.
+
+**VS Code:** Clone the repo → open in VS Code → `Ctrl+Shift+P` → "Dev Containers: Reopen in Container"
+
+**GitHub Codespaces:** Click "Code" → "Codespaces" → "Create codespace on main"
+
+> The DevContainer is configured with `--shm-size=2gb` and `--ipc=host` (required for headless Chromium). See [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json) for the full spec.
+
+### 2. Configure CI/CD Environment
+
+The pipeline deploys to Azure and runs live integration tests — GitHub Secrets and Azure OIDC credentials must be configured before running.
+
+**Option A — Let your coding agent do it:**
+
+Paste the following prompt into Claude Code, GitHub Copilot, or any agentic coding tool:
+
+> Configure all GitHub Secrets and Variables needed to run this project's CI/CD pipeline.
+>
+> **What to read:**
+> 1. [`apps/sample-app/infra/dev.tfvars.example`](apps/sample-app/infra/dev.tfvars.example) — Terraform variable template showing which values are needed and how they map to `TF_VAR_*` env vars in CI.
+> 2. [`.github/AGENTIC-WORKFLOW.md` — CI/CD Integration section](/.github/AGENTIC-WORKFLOW.md#cicd-integration) — Complete list of all GitHub Secrets, Variables, OIDC setup, and the bootstrap sequence for first-time provisioning.
+> 3. [`.github/AGENTIC-WORKFLOW.md` — Linking CI/CD Secrets to APM Config](/.github/AGENTIC-WORKFLOW.md#linking-cicd-secrets-to-apm-config) — Which secrets must stay in sync with `apps/sample-app/.apm/apm.yml`.
+> 4. [`.github/workflows/deploy-infra.yml`](.github/workflows/deploy-infra.yml) — Infrastructure deployment workflow (uses `TF_VAR_*` env vars, not var-files).
+>
+> **What to do:**
+> - Run `terraform init` and `terraform apply` locally using `dev.tfvars` (copied from the example) to provision Azure infrastructure.
+> - Extract Terraform outputs and set all required GitHub Secrets and Variables using the `gh` CLI.
+> - Verify that `apm.yml` URLs and resource names match the configured secrets.
+
+**Option B — Do it manually:**
+
+Follow the [bootstrap sequence](.github/AGENTIC-WORKFLOW.md#bootstrap-sequence-first-time-setup) in `AGENTIC-WORKFLOW.md`. It walks through Terraform provisioning, extracting outputs, and configuring every GitHub Secret and Variable.
+
+### 3. Authenticate and Run
+
+```bash
+# Authenticate (inside DevContainer)
+gh auth login
+az login
+
+# Create a feature spec
 mkdir -p apps/sample-app/in-progress
 vim apps/sample-app/in-progress/my-feature_SPEC.md
 
-# 3. Initialize pipeline state
+# Initialize pipeline state
 export APP_ROOT=apps/sample-app
 npm run pipeline:init my-feature Full-Stack
 
-# 4. Run the orchestrator
+# Run the orchestrator
 npm run agent:run -- --app apps/sample-app my-feature
 
-# 5. Review the PR when the pipeline completes
+# Review the PR when the pipeline completes
 ```
 
 ### Prerequisites
 
-- **CI/CD configured:** GitHub Secrets and Azure OIDC credentials must be set up — the pipeline deploys to Azure and runs live integration tests. See [CI/CD Integration](.github/AGENTIC-WORKFLOW.md#cicd-integration) for the full secret list, OIDC setup, and [bootstrap sequence](.github/AGENTIC-WORKFLOW.md#bootstrap-sequence-first-time-setup) for first-time provisioning.
+- **DevContainer:** Required — see step 1 above
+- **CI/CD configured:** GitHub Secrets and Azure OIDC credentials — see step 2 above
 - **GitHub CLI auth:** `gh auth status` must show a valid token
 - **Azure CLI auth:** `az account show` must succeed (for live deploy/test phases)
-- **DevContainer:** Must have `--shm-size=2gb` and `--ipc=host` (already configured)
 - **App config:** `apps/sample-app/.apm/apm.yml` must exist — URLs and Azure resource names must match GitHub secrets ([linking table](.github/AGENTIC-WORKFLOW.md#linking-cicd-secrets-to-apm-config))
 
 ### Adapting for Your Project
