@@ -6,6 +6,10 @@
 
 ---
 
+> **Note on model usage:** This pipeline currently uses **Claude Opus 4.6** for all orchestrator operations and sub-agents. A future update will introduce model tiering — routing lower-cognitive-load tasks (formatting, file moves, simple validations) to faster, less expensive models while reserving Opus for planning, architecture, and complex reasoning steps.
+
+---
+
 ## Quick Start
 
 ### 1. Open in DevContainer
