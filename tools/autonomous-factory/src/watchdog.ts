@@ -35,7 +35,7 @@ const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const TIMEOUT_DEV      = 1_200_000; // 20 min (dev items — heaviest workload)
 const TIMEOUT_TEST     = 600_000;   // 10 min (unit test items — just running tests)
 const TIMEOUT_DEFAULT  = 900_000;   // 15 min (fallback)
-const TIMEOUT_DEPLOY   = 1_800_000; // 30 min (push-code, poll-ci — CI can take time)
+const TIMEOUT_DEPLOY   = 900_000;   // 15 min (push-code/poll-ci now deterministic; fallback agent gets 15 min)
 const TIMEOUT_FINALIZE = 1_200_000; // 20 min (docs-archived, live-ui, integration-test)
 
 const DEV_ITEMS = new Set(["backend-dev", "frontend-dev", "schema-dev"]);
@@ -46,6 +46,14 @@ const LONG_ITEMS = new Set(["live-ui", "integration-test"]);
 
 /** Post-deploy items that can trigger a redevelopment reroute on failure */
 const POST_DEPLOY_ITEMS = new Set(["live-ui", "integration-test"]);
+
+/**
+ * Delay (ms) after CI deployment completes before running post-deploy tests.
+ * Azure Functions and SWA can take 30-60s to propagate after a deployment
+ * workflow reports success. Without this delay, integration tests hit stale
+ * deployment artifacts and produce false 404s.
+ */
+const POST_DEPLOY_PROPAGATION_DELAY_MS = 30_000;
 
 // triageFailure and parseTriageDiagnostic are imported from ./triage.js above
 
@@ -142,6 +150,8 @@ interface ItemSummary {
   toolCounts: Record<string, number>;
   /** Error message if the step failed */
   errorMessage?: string;
+  /** Git HEAD after this attempt — used for identical-error dedup */
+  headAfterAttempt?: string;
 }
 
 interface ShellEntry {
@@ -162,6 +172,57 @@ interface PlaywrightLogEntry {
 
 /** Collected summaries across the whole pipeline run */
 const pipelineSummaries: ItemSummary[] = [];
+
+/**
+ * Circuit breaker: skip retrying an item if the root cause is identical to the
+ * previous attempt AND no meaningful code was committed in between.
+ *
+ * Compares structured diagnostic_trace (not the full error JSON) and checks
+ * whether git changes since the last attempt are limited to pipeline state
+ * files (in-progress/). This prevents groundhog-day loops where the triage
+ * correctly identifies the fix but the dev agent can't persist it (e.g.,
+ * commit scope mismatch).
+ */
+function shouldSkipRetry(itemKey: string): boolean {
+  const prevAttempts = pipelineSummaries.filter(
+    (s) => s.key === itemKey && s.outcome !== "completed",
+  );
+  if (prevAttempts.length < 2) return false;
+
+  const last = prevAttempts[prevAttempts.length - 1];
+  const prev = prevAttempts[prevAttempts.length - 2];
+  if (!last.errorMessage || !prev.errorMessage) return false;
+
+  // Extract diagnostic_trace from structured errors for comparison
+  // (full error JSON includes timestamps/metadata that differ between attempts)
+  const lastDiag = parseTriageDiagnostic(last.errorMessage);
+  const prevDiag = parseTriageDiagnostic(prev.errorMessage);
+  const lastTrace = lastDiag?.diagnostic_trace ?? last.errorMessage;
+  const prevTrace = prevDiag?.diagnostic_trace ?? prev.errorMessage;
+
+  if (lastTrace !== prevTrace) return false;
+
+  // Check if only pipeline state files changed between attempts
+  if (last.headAfterAttempt && prev.headAfterAttempt &&
+      last.headAfterAttempt !== prev.headAfterAttempt) {
+    try {
+      const changedFiles = execSync(
+        `git diff --name-only ${prev.headAfterAttempt} ${last.headAfterAttempt}`,
+        { cwd: repoRoot, encoding: "utf-8", timeout: 10_000 },
+      ).trim();
+      if (changedFiles) {
+        const files = changedFiles.split("\n").filter(Boolean);
+        const onlyStateFiles = files.every((f) => f.includes("in-progress/"));
+        if (!onlyStateFiles) return false; // Real code was changed — allow retry
+      }
+    } catch {
+      // If git diff fails, fall back to HEAD comparison
+      return false;
+    }
+  }
+
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -485,12 +546,40 @@ async function main(): Promise<void> {
   ): Promise<{ summary: ItemSummary; halt: boolean; createPr: boolean }> {
     attemptCounts[next.key] = (attemptCounts[next.key] ?? 0) + 1;
 
+    // Circuit breaker: skip if identical error + no code changed since last attempt
+    if (attemptCounts[next.key] > 2 && shouldSkipRetry(next.key)) {
+      console.log(`\n  ⚡ Circuit breaker: skipping ${next.key} — identical error with no code changes since last attempt`);
+      const skipSummary: ItemSummary = {
+        key: next.key,
+        label: next.label,
+        agent: next.agent ?? "unknown",
+        phase: next.phase ?? "unknown",
+        attempt: attemptCounts[next.key],
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: 0,
+        outcome: "failed",
+        intents: ["Circuit breaker: identical error, no code changes — skipped"],
+        messages: [],
+        filesRead: [],
+        filesChanged: [],
+        shellCommands: [],
+        toolCounts: {},
+        errorMessage: "Circuit breaker: identical error repeated without code changes",
+      };
+      try { skipSummary.headAfterAttempt = execSync("git rev-parse HEAD", { cwd: repoRoot, encoding: "utf-8", timeout: 5_000 }).trim(); } catch { /* non-fatal */ }
+      pipelineSummaries.push(skipSummary);
+      writePipelineSummary(slug);
+      return { summary: skipSummary, halt: true, createPr: false };
+    }
+
     console.log(
       `\n${"═".repeat(70)}\n  Phase: ${next.phase} | Item: ${next.key} | Agent: ${next.agent}\n${"═".repeat(70)}`,
     );
 
     // Snapshot HEAD before dev steps (for auto-skip change detection)
-    if (DEV_ITEMS.has(next.key) && !preStepRefs[next.key]) {
+    // Also snapshot before ALL items for accurate filesChanged tracking via git diff
+    if (!preStepRefs[next.key]) {
       try {
         preStepRefs[next.key] = execSync("git rev-parse HEAD", {
           cwd: repoRoot, encoding: "utf-8", timeout: 5_000,
@@ -594,6 +683,99 @@ async function main(): Promise<void> {
         if (hasInfraChanges && !hasFrontendChanges) {
           console.log(`  ▶ Running ${next.key} — infra changes detected (forcing browser verification for CORS/APIM/IAM)`);
         }
+      }
+    }
+
+    // ── Post-deploy propagation delay ─────────────────────────────────────
+    // After CI reports deployment success, Azure Functions and SWA can take
+    // 30-60s to propagate the new code. Without this delay, integration tests
+    // hit stale deployment artifacts and produce false 404 failures.
+    if (POST_DEPLOY_ITEMS.has(next.key) && attemptCounts[next.key] <= 1) {
+      console.log(`  ⏳ Waiting ${POST_DEPLOY_PROPAGATION_DELAY_MS / 1000}s for deployment propagation before ${next.key}...`);
+      await new Promise((resolve) => setTimeout(resolve, POST_DEPLOY_PROPAGATION_DELAY_MS));
+    }
+
+    // ── Deterministic push-code bypass (no agent session) ─────────────────
+    if (next.key === "push-code") {
+      console.log("  📦 push-code: Running deterministic push (no agent session)");
+      try {
+        const commitScript = path.join(repoRoot, "tools", "autonomous-factory", "agent-commit.sh");
+        const branchScript = path.join(repoRoot, "tools", "autonomous-factory", "agent-branch.sh");
+
+        // Commit any uncommitted changes across all scopes
+        try {
+          execSync(`bash "${commitScript}" all "feat(${slug}): push code for CI"`, {
+            cwd: repoRoot, stdio: "pipe", timeout: 30_000,
+            env: { ...process.env, APP_ROOT: appRoot },
+          });
+        } catch { /* no changes to commit — OK */ }
+
+        // Push via branch wrapper (validates branch, retries once)
+        execSync(`bash "${branchScript}" push`, {
+          cwd: repoRoot, stdio: "inherit", timeout: 60_000,
+          env: { ...process.env, BASE_BRANCH: baseBranch },
+        });
+
+        // Mark complete
+        await completeItem(slug, next.key);
+        console.log("  ✅ push-code complete (deterministic)");
+
+        itemSummary.outcome = "completed";
+        itemSummary.finishedAt = new Date().toISOString();
+        itemSummary.durationMs = Date.now() - stepStart;
+        itemSummary.intents.push("Deterministic push — no agent session");
+        pipelineSummaries.push(itemSummary);
+        writePipelineSummary(slug);
+        writeTerminalLog(slug);
+        return { summary: itemSummary, halt: false, createPr: false };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  ✖ Deterministic push failed: ${message}`);
+        // Fail the item instead of falling back to an agent session.
+        // Agent sessions for push-code historically caused destructive git
+        // operations (reset --hard, cherry-pick) and 15-minute timeouts.
+        try {
+          await failItem(slug, next.key, `Deterministic push failed: ${message}`);
+        } catch { /* best-effort */ }
+        itemSummary.outcome = "failed";
+        itemSummary.errorMessage = `Deterministic push failed: ${message}`;
+        itemSummary.finishedAt = new Date().toISOString();
+        itemSummary.durationMs = Date.now() - stepStart;
+        pipelineSummaries.push(itemSummary);
+        writePipelineSummary(slug);
+        writeTerminalLog(slug);
+        return { summary: itemSummary, halt: false, createPr: false };
+      }
+    }
+
+    // ── Deterministic poll-ci bypass (no agent session) ─────────────────
+    if (next.key === "poll-ci") {
+      console.log("  ⏳ poll-ci: Running deterministic CI poll (no agent session)");
+      try {
+        const pollScript = path.join(repoRoot, "tools", "autonomous-factory", "poll-ci.sh");
+        execSync(`bash "${pollScript}"`, {
+          cwd: repoRoot, stdio: "inherit",
+          timeout: 1_200_000,  // 20 min max for CI to complete
+          env: { ...process.env, POLL_MAX_RETRIES: "60" },
+        });
+
+        // All CI workflows passed
+        await completeItem(slug, next.key);
+        console.log("  ✅ poll-ci complete (all workflows passed)");
+
+        itemSummary.outcome = "completed";
+        itemSummary.finishedAt = new Date().toISOString();
+        itemSummary.durationMs = Date.now() - stepStart;
+        itemSummary.intents.push("Deterministic CI poll — all workflows passed");
+        pipelineSummaries.push(itemSummary);
+        writePipelineSummary(slug);
+        writeTerminalLog(slug);
+        return { summary: itemSummary, halt: false, createPr: false };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  ✖ CI poll failed or had failures: ${message}`);
+        console.log("  🔄 Falling back to agent session for CI failure diagnosis...");
+        // Fall through to the normal agent session path below
       }
     }
 
@@ -778,9 +960,30 @@ async function main(): Promise<void> {
               : "",
           ].filter(Boolean).join("\n"))
           .join("\n\n");
-        taskPrompt += `\n\n## Redevelopment Context (CRITICAL)\nThe following post-deploy verification steps failed. Fix the root cause in your code:\n\n${failureDetails}\n\nFocus on the errors above — they describe exactly what broke in production.`;
+
+        // Detect cross-cutting scope issues: if the error mentions .github/workflows
+        // or CI/CD files, warn the agent about commit scope and provide the cicd scope
+        const lastError = downstreamFailures[downstreamFailures.length - 1]?.errorMessage ?? "";
+        const cicdFilePatterns = [".github/workflows", "deploy-backend.yml", "deploy-frontend.yml", "deploy-infra.yml"];
+        const involvesCicd = cicdFilePatterns.some((p) => lastError.includes(p));
+
+        let scopeGuidance = "";
+        if (involvesCicd) {
+          scopeGuidance = `\n\n## Commit Scope Warning (CRITICAL)\n`
+            + `The error above involves CI/CD workflow files under \`.github/workflows/\`. `
+            + `These files are NOT covered by the default \`backend\` or \`frontend\` commit scopes.\n\n`
+            + `**To commit .github/ changes, use the \`cicd\` scope:**\n`
+            + "```bash\n"
+            + `bash tools/autonomous-factory/agent-commit.sh cicd "fix(ci): <description>"\n`
+            + "```\n"
+            + `If your fix spans both backend code AND workflow files, make TWO commits:\n`
+            + `1. \`agent-commit.sh backend "fix(backend): ..."\` for backend/ changes\n`
+            + `2. \`agent-commit.sh cicd "fix(ci): ..."\` for .github/ changes\n`;
+        }
+
+        taskPrompt += `\n\n## Redevelopment Context (CRITICAL)\nThe following post-deploy verification steps failed. Fix the root cause in your code:\n\n${failureDetails}\n\nFocus on the errors above — they describe exactly what broke in production.${scopeGuidance}`;
         console.log(
-          `  🔗 Injected downstream failure context from ${downstreamFailures.length} post-deploy item(s)`,
+          `  🔗 Injected downstream failure context from ${downstreamFailures.length} post-deploy item(s)${involvesCicd ? " (with CI/CD scope guidance)" : ""}`,
         );
       }
     }
@@ -868,6 +1071,24 @@ async function main(): Promise<void> {
     // Record timing
     itemSummary.finishedAt = new Date().toISOString();
     itemSummary.durationMs = Date.now() - stepStart;
+
+    // Record HEAD for circuit breaker (identical-error dedup)
+    try { itemSummary.headAfterAttempt = execSync("git rev-parse HEAD", { cwd: repoRoot, encoding: "utf-8", timeout: 5_000 }).trim(); } catch { /* non-fatal */ }
+
+    // Augment filesChanged with git diff — agents modify files via shell
+    // commands (sed, tee, echo >), not just write_file/edit_file SDK tools.
+    // Without this, allFilesChanged in _CHANGES.json is often empty.
+    if (preStepRefs[next.key] && itemSummary.headAfterAttempt) {
+      try {
+        const gitChanges = getGitChangedFiles(preStepRefs[next.key]);
+        for (const f of gitChanges) {
+          // Exclude pipeline state files — they're not "real" code changes
+          if (!f.includes("in-progress/") && !itemSummary.filesChanged.includes(f)) {
+            itemSummary.filesChanged.push(f);
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
 
     pipelineSummaries.push(itemSummary);
     writePipelineSummary(slug);
@@ -1082,13 +1303,28 @@ function archiveFeatureFiles(featureSlug: string, root: string, repoRootDir: str
       `${featureSlug}_CHANGES.json`,
     ];
 
-    // Dynamically find the SPEC file (handles uppercase slug, hyphens vs underscores)
+    // Dynamically find the SPEC file (handles uppercase slug, hyphens vs underscores,
+    // and legacy naming like FULLSTACK_DEPLOY_SPEC.md that lacks the slug prefix)
     const entries = fs.readdirSync(inProgress);
     const specTarget1 = `${featureSlug}_spec.md`.toLowerCase();
     const specTarget2 = `${featureSlug.replace(/-/g, "_")}_spec.md`.toLowerCase();
-    const specFile = entries.find(
-      (f) => f.toLowerCase() === specTarget1 || f.toLowerCase() === specTarget2,
-    );
+    const specFile = entries.find((f) => {
+      const lower = f.toLowerCase();
+      if (lower === specTarget1 || lower === specTarget2) return true;
+      // Fallback: match any file ending in _spec.md or _deploy_spec.md that isn't
+      // from another feature (i.e. not prefixed with a different slug)
+      if (lower.endsWith("_spec.md") || lower.endsWith("_deploy_spec.md")) {
+        // Accept if no other slug prefix is present (standalone spec files)
+        const hasSlugPrefix = lower.startsWith(featureSlug.toLowerCase())
+          || lower.startsWith(featureSlug.replace(/-/g, "_").toLowerCase());
+        const isGenericSpec = !lower.includes("_state.") && !entries.some(
+          (other) => other !== f && other.toLowerCase().startsWith(lower.split("_spec")[0])
+            && other.toLowerCase().endsWith("_state.json"),
+        );
+        return hasSlugPrefix || isGenericSpec;
+      }
+      return false;
+    });
     if (specFile) artifacts.push(specFile);
 
     for (const artifact of artifacts) {

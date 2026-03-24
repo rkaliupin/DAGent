@@ -16,7 +16,7 @@
   ],
 
   "features": {
-    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/devcontainers/features/azure-cli:1": { "version": "2.73.0" },
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.11"
